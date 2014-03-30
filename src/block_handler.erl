@@ -28,7 +28,7 @@ checkBlock(Block) ->
 	gen_server:call(?MODULE, {checkBlock, Block}).
 
 fetchBlock(Socket, Status, Hash) ->
-	io:format("Fetch Block~n"),
+	io:format("Fetch Block: ~p~n", [Hash]),
 	case Status of
 		wanted_block ->
 			io:format("Block is wanted~n"), 

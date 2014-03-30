@@ -8,7 +8,7 @@
 %% ====================================================================
 %% API functions
 %% ====================================================================
--export([addr/1, inv/2, tx/1]).
+-export([addr/1, inv/2, tx/1, block/1]).
 
 addr(Addr) ->
 	peer_handler:addPeer(Addr).
@@ -20,10 +20,15 @@ inv(#inv_vect{type = ?INV_TX} = IV, Socket) ->
 inv(#inv_vect{type = Type}, _Socket) ->
 	io:format("UNKNOWN TYPE: ~p~n", [Type]),
 	unknown.
-
+%%
+%% Management function when a tx has been returned by a get tx request
+%5
 tx(Tx) ->
 	tx_handler:addTx(Tx).
-	
+
+%%
+%% Management function when a block has been returned by a get data request
+%%	
 block(Block) ->
 	block_handler:addBlock(Block).	
 

@@ -117,7 +117,7 @@ initPeerHandshakeS2(Socket, [#msg_header{command= <<"version">> }] = Payload) ->
 					
 				_ -> {error, handshake_incomplete}
 	end;
-initPeerHandshakeS2(Socket, [#msg_header{command= <<"version">> } = Version, #msg_header{command= <<"verack">> } = _Verack | Other]) ->
+initPeerHandshakeS2(Socket, [#msg_header{command= <<"version">> } = Version, #msg_header{command= <<"verack">> } = _Verack | _Other]) ->
 	io:format("Version and verack recieved in the correct order, reply with my verack message~n"),
 	VerackMessage = verackMessage(),
 	case gen_tcp:send(Socket, VerackMessage) of
@@ -155,8 +155,12 @@ doCallback(Socket, Callback, [#msg_header{command = <<"tx">>, payload=TxPayload}
 	doFunCallback(Socket, Callback, TxPayload),
 	doCallback(Socket, Callback, MorePayload);
 doCallback(Socket, Callback, [#msg_header{command = <<"block">>, payload=BlockPayload} | MorePayload]) ->
-	io:format("Received Block~n"),
+	%io:format("Received Block~n"),
 	doFunCallback(Socket, Callback, BlockPayload),
+	doCallback(Socket, Callback, MorePayload);
+doCallback(Socket, Callback, [#msg_header{command = <<"ping">>, payload=Nonce} | MorePayload]) ->
+	%io:format("Received Ping~n"),
+	sendCommand(Socket, ping, Nonce),
 	doCallback(Socket, Callback, MorePayload);
 doCallback(Socket, Callback, [Msg | MorePayload]) ->
 	io:format("Recieved: ~p~n", [Msg]),
@@ -170,9 +174,14 @@ doFunCallback(Socket, F, [#net_addr{} = NetAddr | MoreAddr]) ->
 doFunCallback(Socket, F, [#inv_vect{} = IV | MoreIV]) ->
 	F:inv(IV, Socket),
 	doFunCallback(Socket, F, MoreIV);
-doFunCallback(Socket, F, #tx{} = Tx) ->
+doFunCallback(_Socket, F, #tx{} = Tx) ->
 	F:tx(Tx),
-	ok.
+	ok;
+doFunCallback(_Socket, F, #block{} = Block) ->
+	F:block(Block),
+	ok;
+doFunCallback(_Socket, _F, _Payload) ->
+	ok. %do nothing 
 
 calculateChecksum([]) -> calculateChecksum(<<>>);	
 calculateChecksum(Payload) ->
@@ -340,6 +349,10 @@ decodePayload(<<"block">>, Payload) ->
 		transactions = decodePayload(<<"tx">>, TransactionsPayload)
 	};
 
+decodePayload(<<"ping">>, Payload) ->
+	<<Nonce:64/little>> = Payload,
+	Nonce;
+
 decodePayload(<<"tx">>, Payload) ->
 	<<Version:32/little, Payload1/binary>> = Payload,
 	{TxInCount, Payload2} = decodeVarInt(Payload1),
@@ -423,6 +436,8 @@ decodeCommand(<<"getdata", _Rest/binary>>) ->
 	<<"getdata">>;
 decodeCommand(<<"notfound", _Rest/binary>>) ->
 	<<"notfound">>;
+decodeCommand(<<"ping", _Rest/binary>>) ->
+	<<"ping">>;
 decodeCommand(_) ->
 	<<"unknown">>.
 
@@ -476,7 +491,11 @@ processPayload(Payload, X) ->
 sendCommand(Socket, getaddr, []) ->
 	gen_tcp:send(Socket, constuctAddrMessage());
 sendCommand(Socket, getdata, [Inventory]) ->
-	gen_tcp:send(Socket, constructGetDataMessage(Inventory)).
+	gen_tcp:send(Socket, constructGetDataMessage(Inventory));
+sendCommand(Socket, pong, Nonce) ->
+	gen_tcp:send(Socket, constructPingMessage(Nonce));
+sendCommand(Socket, ping, Nonce) ->
+	gen_tcp:send(Socket, constructPingMessage(Nonce)).	%%when pinging send a random 64-bit nonce
 
 constuctAddrMessage() ->
 	createHeader("getaddr", 0, calculateChecksum("")).
@@ -484,5 +503,10 @@ constuctAddrMessage() ->
 constructGetDataMessage(Inventory) ->
 	Payload = encodeInventory(Inventory),
 	Header = createHeader("getdata", byte_size(Payload), calculateChecksum(Payload)),
+	<<Header/binary, Payload/binary>>.
+
+constructPingMessage(Nonce) ->
+	Payload = <<Nonce/binary>>,
+	Header = createHeader("pong", byte_size(Payload), calculateChecksum(Payload)),
 	<<Header/binary, Payload/binary>>.
 	
