@@ -29,6 +29,7 @@
 
 -record(tx_in, {
 			previous_output = undefined,
+			previous_index = undefined,
 			script_length = undefined,
 			signature_script = undefined,
 			sequence = undefined

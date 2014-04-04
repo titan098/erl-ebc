@@ -308,12 +308,13 @@ encodeInventory(#inv_vect{} = IV) ->
 
 decodeTxIn(0, Payload, Trans) -> {ok, Payload, Trans};
 decodeTxIn(Count, Payload, Trans) ->
-	<<PreviousOutput:36/binary, Payload1/binary>> = Payload,
+	<<PreviousOutput:32/binary, TxOutIndex:32/little, Payload1/binary>> = Payload,
 	{ScriptLength, Payload2} = decodeVarInt(Payload1),
 	<<Script:ScriptLength/binary, Sequence:32/little, Rest/binary>> = Payload2,
 	decodeTxIn(Count-1, Rest,
 		Trans ++ [#tx_in{
 			previous_output = PreviousOutput,
+			previous_index = TxOutIndex,
 			script_length = ScriptLength,
 			signature_script = Script,
 			sequence = Sequence
@@ -330,6 +331,10 @@ decodeTxOut(Count, Payload, Trans) ->
 		 pk_script_length = PkScriptLength,
 		 pk_script = PkScript
 	 }]).
+
+decodeTransactions(TransactionPayload, TransCount) ->
+	{Tx, NewTransPayload} = decodePayload(<<"tx">>, TransactionPayload),
+	[Tx | decodeTransactions(NewTransPayload, TransCount-1)].
 
 decodePayload(<<"block">>, Payload) ->
 	<<HeaderPayload:80/binary, BlockPayloadRest/binary>> = Payload,
@@ -359,16 +364,19 @@ decodePayload(<<"tx">>, Payload) ->
 	{ok, Payload3, TxIn} = decodeTxIn(TxInCount, Payload2, []),
 	{TxOutCount, Payload4} = decodeVarInt(Payload3),
 	{ok, Payload5, TxOut} = decodeTxOut(TxOutCount, Payload4, []),	
-	<<LockTime:32/little, _Rest/binary>> = Payload5,
-	#tx{
-		hash = cryptopp:sha256(cryptopp:sha256(Payload)),
+	<<LockTime:32/little, Rest/binary>> = Payload5,
+	HeaderSize = size(Payload) - size(Rest),
+	<<HeaderPayload:HeaderSize/binary, _MorePayload/binary>> = Payload,
+
+	{#tx{
+		hash = ebc_util:reverseBinary(cryptopp:sha256(cryptopp:sha256(HeaderPayload))),
 		version = Version,
 		tx_in_count = TxInCount,
 		tx_in = TxIn,
 		tx_out_count = TxOutCount,
 		tx_out = TxOut,
 		lock_time = LockTime
-	};
+	}, Rest};
 
 decodePayload(<<"inv">>, Payload) ->
 	{Count, MorePayload} = decodeVarInt(Payload),
@@ -486,6 +494,29 @@ processPayload(<<>>, X) -> X;
 processPayload(Payload, X) ->
 	{Packet, MorePayload} = getRecordFromPayload(Payload),
 	processPayload(MorePayload, X ++ [Packet]).
+
+%************* Encoding Functions **************%
+
+encodePayload(#tx_out{value = Value, pk_script_length = ScriptLength, pk_script = Script} = _TxOut) ->
+	Vi_ScriptLength = encodeVarInt(ScriptLength),
+	<<Value:64/little, Vi_ScriptLength/binary, Script/binary>>;
+
+encodePayload(#tx_in{previous_output = PreOut, previous_index = PreIndex, script_length = ScriptLength, signature_script = Signature, sequence = Sequence} = _TxIn) ->
+	Vi_ScriptLength = encodeVarInt(ScriptLength),
+	<<PreOut/binary, PreIndex:32/little, Vi_ScriptLength/binary, Signature/binary, Sequence:32/little>>;
+
+encodePayload(#tx{version = Version, tx_in_count = TxInCount, tx_in = TxIn, tx_out_count = TxOutCount, tx_out = TxOut, lock_time = LockTime} = _Tx) ->
+	Vi_TxInCount = encodeVarInt(TxInCount),
+	Vi_TxOutCount = encodeVarInt(TxOutCount),
+	TxInBin = encodePayloadArray(TxIn),
+	TxOutBin = encodePayloadArray(TxOut),
+	<<Version:32/little, Vi_TxInCount/binary, TxInBin/binary, Vi_TxOutCount/binary, TxOutBin/binary, LockTime:32/little>>.
+
+encodePayloadArray([]) -> <<>>;
+encodePayloadArray([Payload | MorePayload]) when is_tuple(Payload) ->
+	PayloadBin = encodePayload(Payload),
+	MorePayloadBin = encodePayload(MorePayload),
+	<<PayloadBin/binary, MorePayloadBin/binary>>.
 
 %************* Sending Commands ****************%
 sendCommand(Socket, getaddr, []) ->
