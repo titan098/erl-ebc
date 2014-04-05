@@ -20,7 +20,7 @@ binaryToHex(X) ->
 	lists:flatten(lists:map(fun hex_char/1, A)).
 
 hex_char(X) ->
-	lists:flatten(io_lib:format("~2.16.0B", [X])).
+	lists:flatten(io_lib:format("~2.16.0b", [X])).
 
 removeDups([]) -> [];
 removeDups([X | Xs]) ->

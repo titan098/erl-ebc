@@ -52,25 +52,22 @@
 			payload = undefined
 		}).
 
--define(TESTNET_MAGIC, 16#0709110B).
--define(MAIN_MAGIC, 16#D9B4BEF9).
-
 init(Address, Port, Callback) ->
 	case create_socket(Address, Port) of
 		{peer, Socket} ->
 			case initPeerHandshake({peer, Socket}) of
 				{ok, Version} ->
 					Resp = #ebc_client_state{
-									  address = Address,
-									  port = Port,
-									  socket = Socket,
-									  connected = ebc_util:epoch(),
-									  lastseen = ebc_util:epoch(),
-									  version = (Version#msg_header.payload)#msg_payload_version.version,
-									  sendPid = undefined,
-									  recvPid = spawn(?MODULE, recvLoop, [Socket, Callback]),
-									  callback = Callback
-									 },
+						  address = Address,
+						  port = Port,
+						  socket = Socket,
+						  connected = ebc_util:epoch(),
+						  lastseen = ebc_util:epoch(),
+						  version = (Version#msg_header.payload)#msg_payload_version.version,
+						  sendPid = undefined,
+						  recvPid = spawn(?MODULE, recvLoop, [Socket, Callback]),
+						  callback = Callback
+					},
 					sendCommand(Socket, getaddr, []),
 					Resp;
 				Error -> Error
@@ -151,7 +148,7 @@ doCallback(Socket, Callback, [#msg_header{command = <<"inv">>, payload=InvPayloa
 	doFunCallback(Socket, Callback, InvPayload#msg_payload_inv.inventory),
 	doCallback(Socket, Callback, MorePayload);
 doCallback(Socket, Callback, [#msg_header{command = <<"tx">>, payload=TxPayload} | MorePayload]) ->
-	%io:format("Received Tx~n"),
+	%io:format("Received Tx payload~n"),
 	doFunCallback(Socket, Callback, TxPayload),
 	doCallback(Socket, Callback, MorePayload);
 doCallback(Socket, Callback, [#msg_header{command = <<"block">>, payload=BlockPayload} | MorePayload]) ->
@@ -181,6 +178,7 @@ doFunCallback(_Socket, F, #block{} = Block) ->
 	F:block(Block),
 	ok;
 doFunCallback(_Socket, _F, _Payload) ->
+	?DGB("I DID NOTHING WITH THIS CALLBACK??~n", []),
 	ok. %do nothing 
 
 calculateChecksum([]) -> calculateChecksum(<<>>);	
@@ -368,7 +366,7 @@ decodePayload(<<"tx">>, Payload) ->
 	HeaderSize = size(Payload) - size(Rest),
 	<<HeaderPayload:HeaderSize/binary, _MorePayload/binary>> = Payload,
 
-	{#tx{
+	#tx{
 		hash = ebc_util:reverseBinary(cryptopp:sha256(cryptopp:sha256(HeaderPayload))),
 		version = Version,
 		tx_in_count = TxInCount,
@@ -376,7 +374,7 @@ decodePayload(<<"tx">>, Payload) ->
 		tx_out_count = TxOutCount,
 		tx_out = TxOut,
 		lock_time = LockTime
-	}, Rest};
+	};
 
 decodePayload(<<"inv">>, Payload) ->
 	{Count, MorePayload} = decodeVarInt(Payload),
@@ -495,6 +493,25 @@ processPayload(Payload, X) ->
 	{Packet, MorePayload} = getRecordFromPayload(Payload),
 	processPayload(MorePayload, X ++ [Packet]).
 
+%************* Transaction Functions ***********%
+decodeAddressFromTxOutScript(PKScript) ->
+	Script = script:decodeScript(PKScript, []),
+	Hash160s = lists:filter(fun(X) when is_binary(X) -> size(X) =:= 20; (_X) -> false end, Script),
+	PayToScript = lists:filter(fun(X) when is_binary(X) -> size(X) > 20; (_X) -> false end, Script),
+	%what about pay to script?
+	lists:flatten(
+		lists:map(fun(X) -> ebc_util:getBitcoinAddressFromHash160(?TESTNET_PREFIX, X) end, Hash160s) ++
+		lists:map(fun(X) -> ebc_util:getBitcoinAddress(?TESTNET_PREFIX, X) end, PayToScript)).
+
+transactionOutAmount(Tx, Index) ->
+	TxOut = lists:nth(Tx#tx.tx_out, Index+1),
+	case TxOut of
+		#tx_out{value = Amount, pk_script = PKScript} ->
+			[Identifier] = decodeAddressFromTxOutScript(PKScript),
+			{Identifier, Amount};
+		_ -> {error, no_input}
+	end.
+	
 %************* Encoding Functions **************%
 
 encodePayload(#tx_out{value = Value, pk_script_length = ScriptLength, pk_script = Script} = _TxOut) ->

@@ -67,6 +67,33 @@
 		transactions = undefined
 	}).
 
+-record(wallet_identifier, {
+		identifier = undefined,	%the address of the wallets we want to observe
+		timestamp = undefined
+	}).
+
+-record(wallet_transaction, {
+		txid = undefined,	%the transaction id
+		address = undefined,	%the address that interacted with this wallet
+		type = undefined,	%in or out
+		amount = undefined,	%amount transacted
+		index = undefined,	%the index of the input/output
+		block = undefined,	%the block this transaction was included in
+		status = unconfirmed,	%the status of this transaction unconfirmed/confirmed
+		spent = false,		%is this a spent transaction
+		spentby = undefined,	%the TxID of the transaction that spent this input
+		tx = undefined		%the raw transaction
+	}).
+
 
 -define(INV_TX, 1).
 -define(INV_BLOCK, 2).
+
+-define(TESTNET_MAGIC, 16#0709110B).
+-define(MAIN_MAGIC, 16#D9B4BEF9).
+
+-define(TESTNET_PREFIX, 16#6f).
+-define(MAINNET_PREFIX, 16#0).
+
+-define(DGB(Str, Args), io:format(Str, Args)).
+%-define(DGB(Str, Args), ok).

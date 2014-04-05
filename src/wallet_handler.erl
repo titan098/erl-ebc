@@ -2,11 +2,11 @@
 %% @doc @todo Add description to peer_handler.
 
 
--module(tx_handler).
+-module(wallet_handler).
 -behaviour(gen_server).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([start_link/0, stop/0, addTx/1, checkTx/1]).
+-export([start_link/0, stop/0, add_wallet_identifier/1, check_interest/1, add_wallet_transaction/4]).
 
 -include("ebc_node.hrl").
 
@@ -21,18 +21,15 @@ start_link() ->
 stop() ->
 	gen_server:cast(?MODULE, stop).
 
-addTx(Tx) when is_record(Tx, tx) ->
-	gen_server:call(?MODULE, {addTx, Tx}).
+add_wallet_identifier(Identifier) ->
+	gen_server:call(?MODULE, {add_wallet_identifier, Identifier}).
 
-checkTx(Tx) ->
-	gen_server:call(?MODULE, {checkTx, Tx}).
+check_interest(Identifier) ->
+	gen_server:call(?MODULE, {check_interest, Identifier}).
 
-fetchTx(Socket, Status, Hash) ->
-	case Status of
-		wanted_tx ->
-			ebc_node:sendCommand(Socket, getdata, [#inv_vect{type = ?INV_TX, hash = Hash}]);
-		_ -> ok
-	end.
+add_wallet_transaction(Identifier, Type, Index, Tx) ->
+	gen_server:call(?MODULE, {add_wallet_transaction, Identifier, Type, Index, Tx}).
+
 
 %% ====================================================================
 %% Behavioural functions 
@@ -72,14 +69,19 @@ init([]) ->
 	Timeout :: non_neg_integer() | infinity,
 	Reason :: term().
 %% ====================================================================
-handle_call({addTx, Tx}, _From, State) ->
-	io:format("Adding Tx: ~p~n", [ebc_util:binaryToHex(Tx#tx.hash)]),
-	addTxToTable(Tx),
-	{reply, ok, State};
+handle_call({add_wallet_identifier, Identifier}, _From, State) ->
+	Reply = addWalletIdentifierToTable(#wallet_identifier{
+		identifier = Identifier,
+		timestamp = ebc_util:epoch()
+	}),
+	{reply, Reply, State};
 
-handle_call({checkTx, Tx}, _From, State) ->
-	io:format("Checking Tx: ~p~n", [ebc_util:binaryToHex(Tx)]),
-	Reply = checkTxFromTable(Tx),
+handle_call({check_interest, Identifier}, _From, State) ->
+	Reply = checkInterest(Identifier),
+	{reply, Reply, State};
+
+handle_call({add_wallet_transaction, Identifier, Type, Index, Tx}, _From, State) ->
+	Reply = addWalletTransaction(Identifier, Type, Index, Tx),
 	{reply, Reply, State};
 
 handle_call(Request, From, State) ->
@@ -148,30 +150,86 @@ code_change(OldVsn, State, Extra) ->
 %% ====================================================================
 
 openMnesiaTable() ->
-	mnesia:create_table(tx, [{ram_copies, [node()]},
-		{record_name, tx},
+	mnesia:create_table(wallet_identifier, [{ram_copies, [node()]},
+		{record_name, wallet_identifier},
 		{type, set},
-		{attributes, record_info(fields, tx)}]).
+		{attributes, record_info(fields, wallet_identifier)}]),
+	mnesia:create_table(wallet_transaction, [{ram_copies, [node()]},
+		{record_name, wallet_transaction},
+		{type, set},
+		{attributes, record_info(fields, wallet_transaction)}]).
 
-addTxToTable(Tx) when is_record(Tx, tx) ->
-	mnesia:transaction(fun() -> mnesia:write(Tx) end).
+addWalletIdentifierToTable(WalletIdentifer) when is_record(WalletIdentifer, wallet_identifier) ->
+	{atomic, Result} = mnesia:transaction(fun() -> mnesia:write(WalletIdentifer) end),
+	Result.
 
-checkTxFromTable(Tx) ->
-%% the transaction in the inv packet is in little endian, and we want it in big endian
-%% so we need to reverse the binary.
-	{atomic, Result} = mnesia:transaction(fun() -> mnesia:read(tx, ebc_util:reverseBinary(Tx)) end),
+addWalletTransactionToTable(WalletTransaction) when is_record(WalletTransaction, wallet_transaction) ->
+	{atomic, Result} = mnesia:transaction(fun() -> mnesia:write(WalletTransaction) end),
+	Result.
+
+getWalletTransaction(TxID) ->
+	F = fun() -> mnesia:read(TxID, wallet_transaction) end,
+	Result = mnesia:transaction(F),
 	case Result of
-		[] -> wanted_tx;
-		_ -> known_tx
+		{atomic, [Transaction]} -> Transaction;
+		_ -> undefined
 	end.
 
-decodeTxOutAddr([], _Index) -> [];
-decodeTxOutAddr([#tx_out{pk_script = PKScript, value = Value} | MoreTxOut], Index) ->
-	Addr = ebc_node:decodeAddressFromTxOutScript(PKScript),
-	[{Addr, Value, Index} | decodeTxOutAddr(MoreTxOut, Index+1)].
+checkInterest(Identifier) ->
+	F = fun() -> mnesia:read(Identifier, wallet_identifier) end,
+	Result = mnesia:transaction(F),
+	case Result of
+		{atomic, [Identifier]} -> {Identifier, true};
+		_ -> {Identifier, false}
+	end.
 
-printTxOutHash([]) -> ok;
-printTxOutHash([#tx{hash = Hash, tx_out = TxOut} | MoreTx]) ->
-	?DGB("TxID: ~p~n", [string:to_lower(cryptopp:hex_dump(Hash))]),
-	?DGB(" OutAddresses: ~p~n", [ebc_util:removeDups(decodeTxOutAddr(TxOut, 0))]),
-	printTxOutHash(MoreTx).
+checkTransactionInterest(Identifier) ->
+	F = fun() -> mnesia:read(Identifier, wallet_transaction) end,
+	Result = mnesia:transaction(F),
+	case Result of
+		{atomic, [Identifier]} -> {Identifier, true};
+		_ -> {Identifier, false}
+	end.
+	
+%%handle an outbound transaction (something that came from a TxIn)
+addWalletTransaction(Identifier, out, Index, #tx{} = Tx) ->
+	TxIn = lists:nth(Tx#tx.tx_in, Index+1),
+
+	case getWalletTransaction(TxIn#tx_in.previous_output) of
+		undefined -> 
+			{error, unknown_output_transaction_for_input};
+		Transaction ->
+			OutputWalletTransaction = Transaction#wallet_transaction{
+				spent = true,
+				spentby = Tx#tx.hash
+			},		
+			WalletTransaction = #wallet_transaction{
+				txid = Tx#tx.hash,
+				address = Transaction#wallet_transaction.address,
+				type = out,
+				amount = Transaction#wallet_transaction.amount,
+				index = Index,
+				block = undefined,
+				status = unconfirmed,
+				tx = Tx
+			},
+			addWalletTransactionToTable(OutputWalletTransaction),
+			addWalletTransactionToTable(WalletTransaction)
+	end;
+
+%%handle and inbound transaction (something that came from a TXOut)
+addWalletTransaction(Identifier, in, Index, #tx{} = Tx) ->
+	{Identifier, Amount} = ebc_node:transactionOutAmount(Tx, Index),
+	WalletTransaction = #wallet_transaction{
+		txid = Tx#tx.hash,
+		address = Identifier,
+		type = in,	%in transactions are those comming into the wallet (listed in a TxOut)
+		amount = Amount,
+		index= Index,
+		block = undefined, %block this transaction is listed in
+		status = unconfirmed, %this is an unconfirmed transaction
+		spent = false,
+		tx = Tx
+	},
+
+	addWalletTransactionToTable(WalletTransaction).

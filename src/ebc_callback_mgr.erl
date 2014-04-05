@@ -22,8 +22,9 @@ inv(#inv_vect{type = Type}, _Socket) ->
 	unknown.
 %%
 %% Management function when a tx has been returned by a get tx request
-%5
+%%
 tx(Tx) ->
+	?DGB("Tx Callback~n", []),
 	tx_handler:addTx(Tx).
 
 %%
