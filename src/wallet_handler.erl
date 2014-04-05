@@ -27,6 +27,9 @@ add_wallet_identifier(Identifier) ->
 check_interest(Identifier) ->
 	gen_server:call(?MODULE, {check_interest, Identifier}).
 
+check_transaction(TxID) ->
+	gen_server:call(?MODULE, {check_transaction, TxID}).
+
 add_wallet_transaction(Identifier, Type, Index, Tx) ->
 	gen_server:call(?MODULE, {add_wallet_transaction, Identifier, Type, Index, Tx}).
 
@@ -79,6 +82,11 @@ handle_call({add_wallet_identifier, Identifier}, _From, State) ->
 handle_call({check_interest, Identifier}, _From, State) ->
 	Reply = checkInterest(Identifier),
 	{reply, Reply, State};
+
+handle_call({check_transaction, TxID}, _From, State) ->
+	Reply = checkTransactionInterest(TxID),
+	{reply, Reply, State};
+
 
 handle_call({add_wallet_transaction, Identifier, Type, Index, Tx}, _From, State) ->
 	Reply = addWalletTransaction(Identifier, Type, Index, Tx),
@@ -192,7 +200,7 @@ checkTransactionInterest(Identifier) ->
 	end.
 	
 %%handle an outbound transaction (something that came from a TxIn)
-addWalletTransaction(Identifier, out, Index, #tx{} = Tx) ->
+addWalletTransaction(_Identifier, out, Index, #tx{} = Tx) ->
 	TxIn = lists:nth(Tx#tx.tx_in, Index+1),
 
 	case getWalletTransaction(TxIn#tx_in.previous_output) of
