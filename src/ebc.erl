@@ -15,4 +15,4 @@ start() ->
 	application:start(ebc),
 	ok.
 
-% mnesia:start(), peer_handler:start_link(), tx_handler:start_link(), block_handler:start_link(), ebc_node_srv:start_link(), ebc_node_srv:connectPeer("192.168.2.3", 18333, ebc_callback_mgr).
+% mnesia:start(), peer_handler:start_link(), tx_handler:start_link(), block_handler:start_link(), ebc_node_srv:start_link(), wallet_handler:start_link(), tx_handler:addTxCallback(wallet_processor, fun(X) -> wallet_handler:tx_callback(X) end), ebc_node_srv:connectPeer("192.168.2.3", 18333, ebc_callback_mgr).

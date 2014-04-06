@@ -504,13 +504,18 @@ decodeAddressFromTxOutScript(PKScript) ->
 		lists:map(fun(X) -> ebc_util:getBitcoinAddress(?TESTNET_PREFIX, X) end, PayToScript)).
 
 transactionOutAmount(Tx, Index) ->
-	TxOut = lists:nth(Tx#tx.tx_out, Index+1),
+	TxOut = lists:nth(Index+1, Tx#tx.tx_out),
 	case TxOut of
 		#tx_out{value = Amount, pk_script = PKScript} ->
-			[Identifier] = decodeAddressFromTxOutScript(PKScript),
+			Identifier = decodeAddressFromTxOutScript(PKScript),
 			{Identifier, Amount};
 		_ -> {error, no_input}
 	end.
+
+decodeTxOutAddr([], _Index) -> [];
+decodeTxOutAddr([#tx_out{pk_script = PKScript, value = Value} | MoreTxOut], Index) ->
+	Addr = decodeAddressFromTxOutScript(PKScript),
+	[{Addr, Value, Index} | decodeTxOutAddr(MoreTxOut, Index+1)].
 	
 %************* Encoding Functions **************%
 

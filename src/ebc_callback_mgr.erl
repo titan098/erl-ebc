@@ -25,7 +25,7 @@ inv(#inv_vect{type = Type}, _Socket) ->
 %%
 tx(Tx) ->
 	?DGB("Tx Callback~n", []),
-	tx_handler:addTx(Tx).
+	tx_handler:processTx(Tx).
 
 %%
 %% Management function when a block has been returned by a get data request

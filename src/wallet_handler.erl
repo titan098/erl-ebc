@@ -6,7 +6,7 @@
 -behaviour(gen_server).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([start_link/0, stop/0, add_wallet_identifier/1, check_interest/1, add_wallet_transaction/4]).
+-export([start_link/0, stop/0, add_wallet_identifier/1, check_interest/1, add_wallet_transaction/4, tx_callback/1]).
 
 -include("ebc_node.hrl").
 
@@ -33,6 +33,21 @@ check_transaction(TxID) ->
 add_wallet_transaction(Identifier, Type, Index, Tx) ->
 	gen_server:call(?MODULE, {add_wallet_transaction, Identifier, Type, Index, Tx}).
 
+%this is an incomming transaction from a transaction (not from a block)
+addIncomingTransaction(Identifier, Index, Tx, tx) ->
+	?DGB("Wallet: Adding Incoming Transaction ~p~n", [cryptopp:hex_dump(Tx#tx.hash)]),
+	add_wallet_transaction(Identifier, in, Index, Tx).	
+
+processIncoming(TxOutList, Tx, tx) ->
+	%Check to see which of the accounts in the lists we have interest in
+	InterestList = [{check_interest(Identifier), Amount, Index} || {Identifier, Amount, Index} <- TxOutList],
+	FilteredInterestList = lists:filter(fun({{_Identifier, Interest}, _Amount, Index}) -> Interest =:= true end, InterestList),
+	lists:map(fun({{Identifier, _Status}, _Amount, Index}) -> addIncomingTransaction(Identifier, Index, Tx, tx) end, FilteredInterestList).
+
+tx_callback(Tx) when is_record(Tx, tx) ->
+	?DGB("Wallet Tx Callback~n", []),
+	TxOutList = ebc_node:decodeTxOutAddr(Tx#tx.tx_out, 0),
+	processIncoming(TxOutList, Tx, tx).	
 
 %% ====================================================================
 %% Behavioural functions 
@@ -176,27 +191,25 @@ addWalletTransactionToTable(WalletTransaction) when is_record(WalletTransaction,
 	Result.
 
 getWalletTransaction(TxID) ->
-	F = fun() -> mnesia:read(TxID, wallet_transaction) end,
+	F = fun() -> mnesia:read(wallet_transaction, TxID) end,
 	Result = mnesia:transaction(F),
 	case Result of
-		{atomic, [Transaction]} -> Transaction;
+		{atomic, [#wallet_transaction{txid = TxID} = Transaction]} -> Transaction;
 		_ -> undefined
 	end.
 
 checkInterest(Identifier) ->
-	F = fun() -> mnesia:read(Identifier, wallet_identifier) end,
+	F = fun() -> mnesia:read(wallet_identifier, Identifier) end,
 	Result = mnesia:transaction(F),
 	case Result of
-		{atomic, [Identifier]} -> {Identifier, true};
+		{atomic, [#wallet_identifier{identifier = Identifier}]} -> {Identifier, true};
 		_ -> {Identifier, false}
 	end.
 
 checkTransactionInterest(Identifier) ->
-	F = fun() -> mnesia:read(Identifier, wallet_transaction) end,
-	Result = mnesia:transaction(F),
-	case Result of
-		{atomic, [Identifier]} -> {Identifier, true};
-		_ -> {Identifier, false}
+	case getWalletTransaction(Identifier) of
+		undefined -> {Identifier, false};
+		_ -> {Identifier, true}
 	end.
 	
 %%handle an outbound transaction (something that came from a TxIn)

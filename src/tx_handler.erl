@@ -6,7 +6,7 @@
 -behaviour(gen_server).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([start_link/0, stop/0, addTx/1, checkTx/1]).
+-export([start_link/0, stop/0, processTx/1, addTx/1, checkTx/1]).
 
 -include("ebc_node.hrl").
 
@@ -20,6 +20,23 @@ start_link() ->
 
 stop() ->
 	gen_server:cast(?MODULE, stop).
+
+processTx(Tx) when is_record(Tx, tx) ->
+	{ok, Callbacks} = getTxCallbacks(),
+
+	F = fun({CallbackID, Callback}) ->
+		?DGB("Tx Callback: ~p~n", [CallbackID]),
+		spawn(fun() -> Callback(Tx) end),	%start it its own process so it doesn't break anything
+		{ok, CallbackID}
+	end,
+
+	lists:map(F, Callbacks).	
+
+addTxCallback(CallbackID, Callback) ->
+	gen_server:call(?MODULE, {addCallback, CallbackID, Callback}).
+
+getTxCallbacks() ->
+	gen_server:call(?MODULE, {getCallbacks}).
 
 addTx(Tx) when is_record(Tx, tx) ->
 	gen_server:call(?MODULE, {addTx, Tx}).
@@ -37,7 +54,9 @@ fetchTx(Socket, Status, Hash) ->
 %% ====================================================================
 %% Behavioural functions 
 %% ====================================================================
--record(state, {}).
+-record(state, {
+	callbacks = []
+}).
 
 %% init/1
 %% ====================================================================
@@ -72,6 +91,14 @@ init([]) ->
 	Timeout :: non_neg_integer() | infinity,
 	Reason :: term().
 %% ====================================================================
+handle_call({getCallbacks}, _From, State) ->
+	{reply, {ok, State#state.callbacks}, State};
+
+handle_call({addCallback, CallbackID, Callback}, _From, State) ->
+	io:format("Adding Tx Callback: ~p~n", [CallbackID]),
+	NewCallbackList = [{CallbackID, Callback} | State#state.callbacks],
+	{reply, ok, State#state{callbacks = NewCallbackList}};
+
 handle_call({addTx, Tx}, _From, State) ->
 	io:format("Adding Tx: ~p~n", [ebc_util:binaryToHex(Tx#tx.hash)]),
 	addTxToTable(Tx),
@@ -165,13 +192,10 @@ checkTxFromTable(Tx) ->
 		_ -> known_tx
 	end.
 
-decodeTxOutAddr([], _Index) -> [];
-decodeTxOutAddr([#tx_out{pk_script = PKScript, value = Value} | MoreTxOut], Index) ->
-	Addr = ebc_node:decodeAddressFromTxOutScript(PKScript),
-	[{Addr, Value, Index} | decodeTxOutAddr(MoreTxOut, Index+1)].
+
 
 printTxOutHash([]) -> ok;
 printTxOutHash([#tx{hash = Hash, tx_out = TxOut} | MoreTx]) ->
 	?DGB("TxID: ~p~n", [string:to_lower(cryptopp:hex_dump(Hash))]),
-	?DGB(" OutAddresses: ~p~n", [ebc_util:removeDups(decodeTxOutAddr(TxOut, 0))]),
+	%?DGB(" OutAddresses: ~p~n", [ebc_util:removeDups(decodeTxOutAddr(TxOut, 0))]),
 	printTxOutHash(MoreTx).
