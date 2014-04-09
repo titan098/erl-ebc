@@ -41,6 +41,10 @@ getTxCallbacks() ->
 addTx(Tx) when is_record(Tx, tx) ->
 	gen_server:call(?MODULE, {addTx, Tx}).
 
+getTx(Tx) ->
+	%TODO: Make it execute a retrieval callback to the wallet
+	wallet_handler:get_wallet_transaction(Tx).
+
 checkTx(Tx) ->
 	gen_server:call(?MODULE, {checkTx, Tx}).
 

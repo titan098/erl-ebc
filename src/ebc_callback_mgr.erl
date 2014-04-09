@@ -27,6 +27,10 @@ tx(Tx) ->
 	?DGB("Tx Callback~n", []),
 	tx_handler:processTx(Tx).
 
+get_tx(Tx) ->
+	?DGB("Get Tx Callback~n", []),
+	tx_handler:getTx(Tx).
+
 %%
 %% Management function when a block has been returned by a get data request
 %%	

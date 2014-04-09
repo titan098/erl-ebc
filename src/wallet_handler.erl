@@ -33,21 +33,37 @@ check_transaction(TxID) ->
 add_wallet_transaction(Identifier, Type, Index, Tx) ->
 	gen_server:call(?MODULE, {add_wallet_transaction, Identifier, Type, Index, Tx}).
 
-%this is an incomming transaction from a transaction (not from a block)
+get_wallet_transaction(TxID) ->
+	gen_server:call(?MODULE, {get_wallet_transaction, TxID}).
+
+%this is an incoming transaction from a transaction (not from a block)
 addIncomingTransaction(Identifier, Index, Tx, tx) ->
 	?DGB("Wallet: Adding Incoming Transaction ~p~n", [cryptopp:hex_dump(Tx#tx.hash)]),
 	add_wallet_transaction(Identifier, in, Index, Tx).	
 
+%this is an outgoing transaction from a transaction (not from a block)
+addOutgoingTransaction(Identifier, Index, Tx, tx) ->
+	?DGB("Wallet: Adding Outgoing Transaction ~p~n", [cryptopp:hex_dump(Tx#tx.hash)]),
+	add_wallet_transaction(Identifier, out, Index, Tx).	
+
 processIncoming(TxOutList, Tx, tx) ->
 	%Check to see which of the accounts in the lists we have interest in
 	InterestList = [{check_interest(Identifier), Amount, Index} || {Identifier, Amount, Index} <- TxOutList],
-	FilteredInterestList = lists:filter(fun({{_Identifier, Interest}, _Amount, Index}) -> Interest =:= true end, InterestList),
+	FilteredInterestList = lists:filter(fun({{_Identifier, Interest}, _Amount, _Index}) -> Interest =:= true end, InterestList),
 	lists:map(fun({{Identifier, _Status}, _Amount, Index}) -> addIncomingTransaction(Identifier, Index, Tx, tx) end, FilteredInterestList).
+
+processOutgoing(TxInList, Tx, tx) ->
+	%check to see if there is interest in the list we have interest in
+	InterestList = [{check_interest(Identifier), PrevHash, Index} || {Identifier, PrevHash, Index} <- TxInList],
+	FilteredInterestList = lists:filter(fun({{_Identifier, Interest}, _PrevHash, _Index}) -> Interest =:= true end, InterestList),
+	lists:map(fun({{Identifier, _Status}, _PrevHash, Index}) -> addOutgoingTransaction(Identifier, Index, Tx, tx) end, FilteredInterestList).
 
 tx_callback(Tx) when is_record(Tx, tx) ->
 	?DGB("Wallet Tx Callback~n", []),
 	TxOutList = ebc_node:decodeTxOutAddr(Tx#tx.tx_out, 0),
-	processIncoming(TxOutList, Tx, tx).	
+	TxInList = ebc_node:decodeTxInAddr(Tx#tx.tx_in, 0),
+	processIncoming(TxOutList, Tx, tx),
+	processOutgoing(TxInList, Tx, tx).
 
 %% ====================================================================
 %% Behavioural functions 
@@ -93,6 +109,11 @@ handle_call({add_wallet_identifier, Identifier}, _From, State) ->
 		timestamp = ebc_util:epoch()
 	}),
 	{reply, Reply, State};
+
+handle_call({get_wallet_transaction, TxID}, _From, State) ->
+	Reply = getWalletTransaction(TxID),
+	{reply, Reply, State};
+
 
 handle_call({check_interest, Identifier}, _From, State) ->
 	Reply = checkInterest(Identifier),
@@ -214,7 +235,7 @@ checkTransactionInterest(Identifier) ->
 	
 %%handle an outbound transaction (something that came from a TxIn)
 addWalletTransaction(_Identifier, out, Index, #tx{} = Tx) ->
-	TxIn = lists:nth(Tx#tx.tx_in, Index+1),
+	TxIn = lists:nth(Index+1, Tx#tx.tx_in),
 
 	case getWalletTransaction(TxIn#tx_in.previous_output) of
 		undefined -> 

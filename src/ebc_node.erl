@@ -494,6 +494,13 @@ processPayload(Payload, X) ->
 	processPayload(MorePayload, X ++ [Packet]).
 
 %************* Transaction Functions ***********%
+evaluateScriptTxIn(SigScript, PrevOutTxKey) ->
+	case script:evaluate(SigScript, []) of
+		[_PubKey] -> {address, tx_handler:getTx(PrevOutTxKey)}; %pay to publickey
+		[PubKey, _Signature] -> {pubkey, PubKey}; %standard transaction
+		_ -> <<>>
+	end.
+
 decodeAddressFromTxOutScript(PKScript) ->
 	Script = script:decodeScript(PKScript, []),
 	Hash160s = lists:filter(fun(X) when is_binary(X) -> size(X) =:= 20; (_X) -> false end, Script),
@@ -503,6 +510,14 @@ decodeAddressFromTxOutScript(PKScript) ->
 		lists:map(fun(X) -> ebc_util:getBitcoinAddressFromHash160(?TESTNET_PREFIX, X) end, Hash160s) ++
 		lists:map(fun(X) -> ebc_util:getBitcoinAddress(?TESTNET_PREFIX, X) end, PayToScript)).
 
+decodeAddressFromTxInScript(SigScript, PrevOutTxKey) ->
+	case evaluateScriptTxIn(SigScript, PrevOutTxKey) of
+		<<>> -> ignored;
+		{pubkey, PubKey} -> ebc_util:getBitcoinAddress(?TESTNET_PREFIX, PubKey);
+		{address, Addr} -> Addr; %pay to public key
+		_ -> ignored
+	end.
+
 transactionOutAmount(Tx, Index) ->
 	TxOut = lists:nth(Index+1, Tx#tx.tx_out),
 	case TxOut of
@@ -511,6 +526,13 @@ transactionOutAmount(Tx, Index) ->
 			{Identifier, Amount};
 		_ -> {error, no_input}
 	end.
+
+decodeTxInAddr([], _Index) -> [];
+decodeTxInAddr([#tx_in{signature_script = SigScript, previous_output = PrevHash, previous_index = PrevIndex} | MoreTxIn], Index) when PrevIndex =/= 16#ffffffff ->
+	?DGB("  PreviousOut: ~p~n", [{decodeAddressFromTxInScript(SigScript, PrevHash), PrevHash, PrevIndex}]),
+	[{decodeAddressFromTxInScript(SigScript, PrevHash), PrevHash, Index} | decodeTxInAddr(MoreTxIn, Index+1)];
+decodeTxInAddr([#tx_in{signature_script = _SigScript, previous_index = PrevIndex} | MoreTxIn], Index) when PrevIndex =:= 16#ffffffff ->
+	[{"0000000000000000000000000000000000", <<0:256>>, Index} | decodeTxInAddr(MoreTxIn, Index+1)].
 
 decodeTxOutAddr([], _Index) -> [];
 decodeTxOutAddr([#tx_out{pk_script = PKScript, value = Value} | MoreTxOut], Index) ->
