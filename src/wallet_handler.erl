@@ -8,6 +8,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -export([start_link/0, stop/0, add_wallet_identifier/1, check_interest/1, add_wallet_transaction/4, tx_callback/1]).
 
+-include_lib("stdlib/include/qlc.hrl").
 -include("ebc_node.hrl").
 
 -compile(export_all).
@@ -27,8 +28,8 @@ add_wallet_identifier(Identifier) ->
 check_interest(Identifier) ->
 	gen_server:call(?MODULE, {check_interest, Identifier}).
 
-check_transaction(TxID) ->
-	gen_server:call(?MODULE, {check_transaction, TxID}).
+check_transaction(TxID, TxIndex) ->
+	gen_server:call(?MODULE, {check_transaction, TxID, TxIndex}).
 
 add_wallet_transaction(Identifier, Type, Index, Tx) ->
 	gen_server:call(?MODULE, {add_wallet_transaction, Identifier, Type, Index, Tx}).
@@ -110,8 +111,8 @@ handle_call({add_wallet_identifier, Identifier}, _From, State) ->
 	}),
 	{reply, Reply, State};
 
-handle_call({get_wallet_transaction, TxID}, _From, State) ->
-	Reply = getWalletTransaction(TxID),
+handle_call({get_wallet_transaction, TxID, TxIndex}, _From, State) ->
+	Reply = getWalletTransaction(TxID, TxIndex),
 	{reply, Reply, State};
 
 
@@ -119,8 +120,8 @@ handle_call({check_interest, Identifier}, _From, State) ->
 	Reply = checkInterest(Identifier),
 	{reply, Reply, State};
 
-handle_call({check_transaction, TxID}, _From, State) ->
-	Reply = checkTransactionInterest(TxID),
+handle_call({check_transaction, TxID, TxIndex}, _From, State) ->
+	Reply = checkTransactionInterest(TxID, TxIndex),
 	{reply, Reply, State};
 
 
@@ -211,8 +212,8 @@ addWalletTransactionToTable(WalletTransaction) when is_record(WalletTransaction,
 	{atomic, Result} = mnesia:transaction(fun() -> mnesia:write(WalletTransaction) end),
 	Result.
 
-getWalletTransaction(TxID) ->
-	F = fun() -> mnesia:read(wallet_transaction, TxID) end,
+getWalletTransaction(TxID, TxIndex) ->
+	F = fun() -> mnesia:read(wallet_transaction, {TxID, TxIndex}) end,
 	Result = mnesia:transaction(F),
 	case Result of
 		{atomic, [#wallet_transaction{txid = TxID} = Transaction]} -> Transaction;
@@ -227,8 +228,8 @@ checkInterest(Identifier) ->
 		_ -> {Identifier, false}
 	end.
 
-checkTransactionInterest(Identifier) ->
-	case getWalletTransaction(Identifier) of
+checkTransactionInterest(Identifier, Index) ->
+	case getWalletTransaction(Identifier, Index) of
 		undefined -> {Identifier, false};
 		_ -> {Identifier, true}
 	end.
@@ -237,7 +238,7 @@ checkTransactionInterest(Identifier) ->
 addWalletTransaction(_Identifier, out, Index, #tx{} = Tx) ->
 	TxIn = lists:nth(Index+1, Tx#tx.tx_in),
 
-	case getWalletTransaction(TxIn#tx_in.previous_output) of
+	case getWalletTransaction(TxIn#tx_in.previous_output, TxIn#tx_in.previous_index) of
 		undefined -> 
 			{error, unknown_output_transaction_for_input};
 		Transaction ->
@@ -263,7 +264,7 @@ addWalletTransaction(_Identifier, out, Index, #tx{} = Tx) ->
 addWalletTransaction(Identifier, in, Index, #tx{} = Tx) ->
 	{Identifier, Amount} = ebc_node:transactionOutAmount(Tx, Index),
 	WalletTransaction = #wallet_transaction{
-		txid = Tx#tx.hash,
+		txid = {Tx#tx.hash, Index},
 		address = Identifier,
 		type = in,	%in transactions are those comming into the wallet (listed in a TxOut)
 		amount = Amount,

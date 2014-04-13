@@ -8,7 +8,7 @@
 %% ====================================================================
 %% API functions
 %% ====================================================================
--export([addr/1, inv/2, tx/1, block/1]).
+-export([addr/1, inv/2, tx/1, get_tx/1, block/1, block_header/1]).
 
 addr(Addr) ->
 	peer_handler:addPeer(Addr).
@@ -35,7 +35,14 @@ get_tx(Tx) ->
 %% Management function when a block has been returned by a get data request
 %%	
 block(Block) ->
-	block_handler:addBlock(Block).	
+	block_handler:addBlock(Block).
+
+%%
+%% Add a collection of block headers
+%%
+block_header(BlockHeader) ->
+	HeaderList = block_handler:addHeader(BlockHeader),
+	block_handler:processBlockHeaderCallbacks(HeaderList).
 
 %% ====================================================================
 %% Internal functions

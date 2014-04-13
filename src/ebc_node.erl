@@ -32,18 +32,6 @@
 			addr_list = undefined
 		}).
 
--record(msg_payload_version, {
-			version = undefined,
-			services = undefined,
-			timestamp = undefined,
-			addr_recv = undefined,
-			addr_from = undefined,
-			nonce = undefined,
-			user_agent = undefined,
-			start_height = undefined,
-			relay = undefined
-		}).
-
 -record(msg_header, {
 			magic = undefined,
 			command = undefined,
@@ -63,7 +51,7 @@ init(Address, Port, Callback) ->
 						  socket = Socket,
 						  connected = ebc_util:epoch(),
 						  lastseen = ebc_util:epoch(),
-						  version = (Version#msg_header.payload)#msg_payload_version.version,
+						  version = Version#msg_header.payload,
 						  sendPid = undefined,
 						  recvPid = spawn(?MODULE, recvLoop, [Socket, Callback]),
 						  callback = Callback
@@ -157,7 +145,15 @@ doCallback(Socket, Callback, [#msg_header{command = <<"block">>, payload=BlockPa
 	doCallback(Socket, Callback, MorePayload);
 doCallback(Socket, Callback, [#msg_header{command = <<"ping">>, payload=Nonce} | MorePayload]) ->
 	%io:format("Received Ping~n"),
-	sendCommand(Socket, ping, Nonce),
+	sendCommand(Socket, ping, binary:decode_unsigned(Nonce)),
+	doCallback(Socket, Callback, MorePayload);
+doCallback(Socket, Callback, [#msg_header{command = <<"pong">>, payload=Nonce} | MorePayload]) ->
+	io:format("Received Pong: ~p~n", [Nonce]),
+	%TODO: do something with the pong
+	doCallback(Socket, Callback, MorePayload);
+doCallback(Socket, Callback, [#msg_header{command = <<"headers">>, payload=HeadersPayload} | MorePayload]) ->
+	io:format("Received Headers~n"),
+	doFunCallback(Socket, Callback, HeadersPayload),
 	doCallback(Socket, Callback, MorePayload);
 doCallback(Socket, Callback, [Msg | MorePayload]) ->
 	io:format("Recieved: ~p~n", [Msg]),
@@ -177,6 +173,8 @@ doFunCallback(_Socket, F, #tx{} = Tx) ->
 doFunCallback(_Socket, F, #block{} = Block) ->
 	F:block(Block),
 	ok;
+doFunCallback(_Socket, F, [#block_header{} | _MoreHeader] = BlockHeaders) ->
+	F:block_header(BlockHeaders);
 doFunCallback(_Socket, _F, _Payload) ->
 	?DGB("I DID NOTHING WITH THIS CALLBACK??~n", []),
 	ok. %do nothing 
@@ -330,17 +328,34 @@ decodeTxOut(Count, Payload, Trans) ->
 		 pk_script = PkScript
 	 }]).
 
+decodeTransactions(_TransactionPayload, 0) -> [];
 decodeTransactions(TransactionPayload, TransCount) ->
 	{Tx, NewTransPayload} = decodePayload(<<"tx">>, TransactionPayload),
 	[Tx | decodeTransactions(NewTransPayload, TransCount-1)].
+
+decodeHeaders(_HeadersPayload, 0) -> [];
+decodeHeaders(HeadersPayload, HeaderCount) ->
+	<<HeaderPayload:80/binary, _TxCount:8, RestPayload/binary>> = HeadersPayload,
+	<<Version:32/little, HashPrevBlock:32/binary, HashMerkleRoot:32/binary, Time:32/little, Bits:32/little, Nonce:32/little, _Rest/binary>> = HeaderPayload,
+	[#block_header{
+		hash = cryptopp:sha256(cryptopp:sha256(HeaderPayload)),
+		version = Version,
+		hashPrevBlock = HashPrevBlock,
+		hashMerkleRoot = HashMerkleRoot,
+		time = Time,
+		bits = Bits,
+		nonce = Nonce
+	} | decodeHeaders(RestPayload, HeaderCount-1)].
 
 decodePayload(<<"block">>, Payload) ->
 	<<HeaderPayload:80/binary, BlockPayloadRest/binary>> = Payload,
 	<<Version:32/little, HashPrevBlock:32/binary, HashMerkleRoot:32/binary, Time:32/little, Bits:32/little, Nonce:32/little>> = HeaderPayload,
 	{TransCount, TransactionsPayload} = decodeVarInt(BlockPayloadRest),
+	HeaderHash = cryptopp:sha256(cryptopp:sha256(HeaderPayload)),
 	#block {
-		hash = ebc_util:reverseBinary(cryptopp:sha256(cryptopp:sha256(HeaderPayload))),
+		hash = HeaderHash,
 		header = #block_header{
+			hash = HeaderHash,
 			version = Version,
 			hashPrevBlock = HashPrevBlock,
 			hashMerkleRoot = HashMerkleRoot,
@@ -356,6 +371,14 @@ decodePayload(<<"ping">>, Payload) ->
 	<<Nonce:64/little>> = Payload,
 	Nonce;
 
+decodePayload(<<"pong">>, Payload) ->
+	<<Nonce:64/little>> = Payload,
+	Nonce;
+
+decodePayload(<<"headers">>, Payload) ->
+	{Count, Payload2} = decodeVarInt(Payload),
+	decodeHeaders(Payload2, Count);
+	
 decodePayload(<<"tx">>, Payload) ->
 	<<Version:32/little, Payload1/binary>> = Payload,
 	{TxInCount, Payload2} = decodeVarInt(Payload1),
@@ -409,7 +432,7 @@ decodePayload(<<"version">>, Payload) ->
 	<<Version:32/little, Services:64/little, Timestamp:64/little, AddrRecv:26/little-binary, AddrFrom:26/little-binary, Nonce:64/little, RestPayload/binary>> = Payload,
 	{UserAgent, MorePayload} = decodeVarString(RestPayload),
 	<<StartHeight:32/little, _RRest/binary>> = MorePayload,
-	#msg_payload_version{
+	#version{
 		 version = Version,
 		 services = Services,
 		 timestamp = Timestamp,
@@ -444,6 +467,10 @@ decodeCommand(<<"notfound", _Rest/binary>>) ->
 	<<"notfound">>;
 decodeCommand(<<"ping", _Rest/binary>>) ->
 	<<"ping">>;
+decodeCommand(<<"pong", _Rest/binary>>) ->
+	<<"pong">>;
+decodeCommand(<<"headers", _Rest/binary>>) ->
+	<<"headers">>;
 decodeCommand(_) ->
 	<<"unknown">>.
 
@@ -529,7 +556,7 @@ transactionOutAmount(Tx, Index) ->
 
 decodeTxInAddr([], _Index) -> [];
 decodeTxInAddr([#tx_in{signature_script = SigScript, previous_output = PrevHash, previous_index = PrevIndex} | MoreTxIn], Index) when PrevIndex =/= 16#ffffffff ->
-	?DGB("  PreviousOut: ~p~n", [{decodeAddressFromTxInScript(SigScript, PrevHash), PrevHash, PrevIndex}]),
+	%?DGB("  PreviousOut: ~p~n", [{decodeAddressFromTxInScript(SigScript, PrevHash), PrevHash, PrevIndex}]),
 	[{decodeAddressFromTxInScript(SigScript, PrevHash), PrevHash, Index} | decodeTxInAddr(MoreTxIn, Index+1)];
 decodeTxInAddr([#tx_in{signature_script = _SigScript, previous_index = PrevIndex} | MoreTxIn], Index) when PrevIndex =:= 16#ffffffff ->
 	[{"0000000000000000000000000000000000", <<0:256>>, Index} | decodeTxInAddr(MoreTxIn, Index+1)].
@@ -568,9 +595,26 @@ sendCommand(Socket, getaddr, []) ->
 sendCommand(Socket, getdata, [Inventory]) ->
 	gen_tcp:send(Socket, constructGetDataMessage(Inventory));
 sendCommand(Socket, pong, Nonce) ->
-	gen_tcp:send(Socket, constructPingMessage(Nonce));
+	gen_tcp:send(Socket, constructPingMessage("pong", Nonce));
 sendCommand(Socket, ping, Nonce) ->
-	gen_tcp:send(Socket, constructPingMessage(Nonce)).	%%when pinging send a random 64-bit nonce
+	gen_tcp:send(Socket, constructPingMessage("ping", Nonce));	%%when pinging send a random 64-bit nonce
+sendCommand(Socket, getblocks, StartBlockHash) ->
+	gen_tcp:send(Socket, constructGetBlocksMessage(StartBlockHash));
+sendCommand(Socket, getheaders, StartBlockHash) ->
+	gen_tcp:send(Socket, constructGetHeadersMessage(StartBlockHash)).
+
+
+constructGetBlocksMessage(StartBlockHash) ->
+	HashLocatorEntries = encodeVarInt(1),
+	Payload = <<70001:32/little, HashLocatorEntries/binary, StartBlockHash/binary, 0:256/little>>,
+	Header = createHeader("getblocks", byte_size(Payload), calculateChecksum(Payload)),
+	<<Header/binary, Payload/binary>>.
+
+constructGetHeadersMessage(StartBlockHash) ->
+	HashLocatorEntries = encodeVarInt(1),
+	Payload = <<70001:32/little, HashLocatorEntries/binary, StartBlockHash/binary, 0:256/little>>,
+	Header = createHeader("getheaders", byte_size(Payload), calculateChecksum(Payload)),
+	<<Header/binary, Payload/binary>>.
 
 constuctAddrMessage() ->
 	createHeader("getaddr", 0, calculateChecksum("")).
@@ -580,8 +624,8 @@ constructGetDataMessage(Inventory) ->
 	Header = createHeader("getdata", byte_size(Payload), calculateChecksum(Payload)),
 	<<Header/binary, Payload/binary>>.
 
-constructPingMessage(Nonce) ->
-	Payload = <<Nonce/binary>>,
-	Header = createHeader("pong", byte_size(Payload), calculateChecksum(Payload)),
+constructPingMessage(Type, Nonce) ->
+	Payload = <<Nonce:64/little>>,
+	Header = createHeader(Type, byte_size(Payload), calculateChecksum(Payload)),
 	<<Header/binary, Payload/binary>>.
 	

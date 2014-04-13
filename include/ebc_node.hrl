@@ -51,7 +51,22 @@
 			lock_time = undefined
 	   }).
 
+-record(version, {
+			version = undefined,
+			services = undefined,
+			timestamp = undefined,
+			addr_recv = undefined,
+			addr_from = undefined,
+			nonce = undefined,
+			user_agent = undefined,
+			start_height = undefined,
+			relay = undefined
+		}).
+
+
 -record(block_header, {
+		hash = <<>>,
+		number = -1,
 		version = undefined,
 		hashPrevBlock = undefined,
 		hashMerkleRoot = undefined,
@@ -94,6 +109,9 @@
 
 -define(TESTNET_PREFIX, 16#6f).
 -define(MAINNET_PREFIX, 16#0).
+
+-define(TESTNET_GENESIS, "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943").
+-define(TESTNET_GENESIS_BIN, <<67,73,127,215,248,38,149,113,8,244,163,15,217,206,195,174,186,121,151,32,132,233,14,173,1,234,51,9,0,0,0,0>>).
 
 -define(DGB(Str, Args), io:format(Str, Args)).
 %-define(DGB(Str, Args), ok).

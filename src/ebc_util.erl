@@ -6,7 +6,7 @@
 %% ====================================================================
 %% API functions
 %% ====================================================================
--export([epoch/0, binaryToHex/1, removeDups/1, reverseBinary/1]).
+-export([epoch/0, binaryToHex/1, hexToBinary/1, removeDups/1, reverseBinary/1]).
 -export([hash160/1, sha256/1]).
 -export([convertToBase58/1, getBitcoinAddress/2, getBitcoinAddressFromHash160/2]).
 
@@ -21,6 +21,14 @@ binaryToHex(X) ->
 
 hex_char(X) ->
 	lists:flatten(io_lib:format("~2.16.0b", [X])).
+
+hexToBinary(S) ->
+  hexToBinary(S, []).
+hexToBinary([], Acc) ->
+  list_to_binary(lists:reverse(Acc));
+hexToBinary([X,Y|T], Acc) ->
+  {ok, [V], []} = io_lib:fread("~16u", [X,Y]),
+  hexToBinary(T, [V | Acc]).
 
 removeDups([]) -> [];
 removeDups([X | Xs]) ->
