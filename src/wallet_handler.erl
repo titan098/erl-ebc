@@ -31,6 +31,9 @@ check_interest(Identifier) ->
 check_transaction(TxID, TxIndex) ->
 	gen_server:call(?MODULE, {check_transaction, TxID, TxIndex}).
 
+get_wallet_transactions(Identifier) ->
+	gen_server:call(?MODULE, {get_wallet_transactions, Identifier}).
+
 add_wallet_transaction(Identifier, Type, Index, Tx) ->
 	gen_server:call(?MODULE, {add_wallet_transaction, Identifier, Type, Index, Tx}).
 
@@ -115,6 +118,10 @@ handle_call({get_wallet_transaction, TxID, TxIndex}, _From, State) ->
 	Reply = getWalletTransaction(TxID, TxIndex),
 	{reply, Reply, State};
 
+handle_call({get_wallet_transactions, Identifier}, _From, State) ->
+	Reply = getWalletTransactions(Identifier),
+	{reply, Reply, State};
+
 
 handle_call({check_interest, Identifier}, _From, State) ->
 	Reply = checkInterest(Identifier),
@@ -189,7 +196,6 @@ terminate(Reason, State) ->
 code_change(OldVsn, State, Extra) ->
     {ok, State}.
 
-
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
@@ -216,9 +222,21 @@ getWalletTransaction(TxID, TxIndex) ->
 	F = fun() -> mnesia:read(wallet_transaction, {TxID, TxIndex}) end,
 	Result = mnesia:transaction(F),
 	case Result of
-		{atomic, [#wallet_transaction{txid = TxID} = Transaction]} -> Transaction;
+		{atomic, [#wallet_transaction{txid = {TxID, TxIndex}} = Transaction]} -> Transaction;
 		_ -> undefined
 	end.
+
+getWalletTransactions(Identifier) ->
+	F = fun() ->
+		qlc:eval(qlc:q([X || X <- mnesia:table(wallet_transaction), X#wallet_transaction.address =:= Identifier]))
+	end,
+
+	case mnesia:transaction(F) of
+		{atomic, [Result]} -> {ok, Result};
+		{atomic, Result} -> {ok, Result};
+		_ -> {error, unknown_identifier}
+	end.
+
 
 checkInterest(Identifier) ->
 	F = fun() -> mnesia:read(wallet_identifier, Identifier) end,
@@ -238,22 +256,27 @@ checkTransactionInterest(Identifier, Index) ->
 addWalletTransaction(_Identifier, out, Index, #tx{} = Tx) ->
 	TxIn = lists:nth(Index+1, Tx#tx.tx_in),
 
-	case getWalletTransaction(TxIn#tx_in.previous_output, TxIn#tx_in.previous_index) of
+	%the transaction is in the wrong format, it must be reversed
+	PrevTx = ebc_util:reverseBinary(TxIn#tx_in.previous_output),
+	case getWalletTransaction(PrevTx, TxIn#tx_in.previous_index) of
 		undefined -> 
+			%?DGB("OUT: unknown output for input PrevOut:~p~n~n", [{PrevTx, TxIn#tx_in.previous_index}]),
 			{error, unknown_output_transaction_for_input};
 		Transaction ->
+			%?DGB("OUT: Known output for input TX:~p~n", [Transaction]),
 			OutputWalletTransaction = Transaction#wallet_transaction{
 				spent = true,
 				spentby = Tx#tx.hash
 			},		
 			WalletTransaction = #wallet_transaction{
-				txid = Tx#tx.hash,
+				txid = {Tx#tx.hash, Index},
 				address = Transaction#wallet_transaction.address,
 				type = out,
 				amount = Transaction#wallet_transaction.amount,
 				index = Index,
 				block = undefined,
 				status = unconfirmed,
+				spent = undefined,
 				tx = Tx
 			},
 			addWalletTransactionToTable(OutputWalletTransaction),
