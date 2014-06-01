@@ -36,7 +36,22 @@ processBlockHeaderCallbacks(BlockHeaderList) ->
 		{ok, CallbackID}
 	end,
 
-	lists:map(F, Callbacks).	
+	lists:map(F, Callbacks).
+
+%%
+%% Process a block that has come in, can be passed off to the wallet_handler to
+%% map transactions to blocks - if required.
+%%
+processBlockCallbacks({Hash, Number, Block}) ->
+	{ok, Callbacks} = getBlockCallbacks(),
+
+	F = fun({CallbackID, Callback}) ->
+		?DGB("Block Callback: ~p~n", [CallbackID]),
+		spawn(fun() -> Callback(Block) end),	%start it its own process so it doesn't break anything
+		{ok, CallbackID}
+	end,
+
+	lists:map(F, Callbacks).
 
 %%
 %% Add a collection of block headers to the DB, this will be a List of headers

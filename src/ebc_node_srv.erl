@@ -9,7 +9,7 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -export([start_link/0, stop/0, connectPeer/3]).
--export([getAddr/0, sendPing/0, getBlocks/1, getBlock/1, getHeaders/1, getMaxBlocksSeen/0]).
+-export([getAddr/0, sendPing/0, getBlocks/1, getBlock/1, getHeaders/1, getMaxBlocksSeen/0, updateLastBlockSeen/2]).
 -export([processHeadersList/1, rebuildChain/1]).
 
 %% ====================================================================
@@ -47,6 +47,9 @@ getHeaders(StartHash) when is_binary(StartHash) ->
 getMaxBlocksSeen() ->
 	gen_server:call(?MODULE, {getMaxSeenBlock}).
 
+updateLastBlockSeen(BlockHash, BlockNumber) ->
+	gen_server:call(?MODULE, {updateLastBlockSeen, BlockHash, BlockNumber}).
+
 %%
 %% rebuild the hash chain
 %%
@@ -76,7 +79,8 @@ processHeadersList(HeadersList) ->
 %% Behavioural functions 
 %% ====================================================================
 -record(state, {
-		connectedPeers = []
+		connectedPeers = [],
+		lastBlockSeen = {nohash, -1}
 }).
 
 %% init/1
@@ -158,6 +162,15 @@ handle_call({getMaxSeenBlock}, _From, #state{connectedPeers = Peers} = State) ->
 	Reply = lists:max(HeightList),
 	{reply, Reply, State};
 
+handle_call({updateLastBlockSeen, BlockHash, BlockNumber}, _From, State) ->
+	{_LastHash, LastBlockNumber} = State#state.lastBlockSeen,
+	NewState = case BlockNumber > LastBlockNumber of
+		true -> State#state{
+				lastBlockSeen = {BlockHash, BlockNumber}
+			};
+		_ -> State
+	end,
+	{reply, ok, NewState};
 
 handle_call(Request, From, State) ->
     Reply = ok,

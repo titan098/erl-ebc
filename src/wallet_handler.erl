@@ -69,6 +69,13 @@ tx_callback(Tx) when is_record(Tx, tx) ->
 	processIncoming(TxOutList, Tx, tx),
 	processOutgoing(TxInList, Tx, tx).
 
+block_callback({Hash, Number, Block}) when is_record(Block, block) ->
+	?DGB("Block Callback~n", []),
+	TxCount = Block#block.trans,
+	TxList = Block#block.transactions.
+	%Process Transaction List
+	
+
 %% ====================================================================
 %% Behavioural functions 
 %% ====================================================================

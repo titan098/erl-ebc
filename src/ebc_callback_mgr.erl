@@ -35,7 +35,8 @@ get_tx(Tx) ->
 %% Management function when a block has been returned by a get data request
 %%	
 block(Block) ->
-	block_handler:addBlock(Block).
+	{Hash, Number} = block_handler:addBlock(Block),
+	block_handler:processBlockCallbacks({Hash, Number, Block}).
 
 %%
 %% Add a collection of block headers
