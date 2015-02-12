@@ -50,6 +50,21 @@ addOutgoingTransaction(Identifier, Index, Tx, tx) ->
 	?DGB("Wallet: Adding Outgoing Transaction ~p~n", [cryptopp:hex_dump(Tx#tx.hash)]),
 	add_wallet_transaction(Identifier, out, Index, Tx).	
 
+%Process the incoming block transaction and update the block number where approeprate
+processIncoming(TxOutList, Tx, block, BlockNumber) ->
+	InterestList = [{check_interest(Identifier), Amount, Index} || {Identifier, Amount, Index} <- TxOutList],
+	FilteredInterestList = lists:filter(fun({{_Identifier, Interest}, _Amount, _Index}) -> Interest =:= true end, InterestList),
+	lists:map(fun({{Identifier, _Status}, _Amount, Index}) -> addIncomingTransaction(Identifier, Index, Tx, tx) end, FilteredInterestList),
+	lists:map(fun({{Identifier, _Status}, _Amount, Index}) -> updateTransactionBlock(Identifier, BlockNumber) end, FilteredInterestList).
+
+%Process the outgoing block transaction and update the block number where approeprate
+processOutgoing(TxInList, Tx, block, BlockNumber) ->
+	%check to see if there is interest in the list we have interest in
+	InterestList = [{check_interest(Identifier), PrevHash, Index} || {Identifier, PrevHash, Index} <- TxInList],
+	FilteredInterestList = lists:filter(fun({{_Identifier, Interest}, _PrevHash, _Index}) -> Interest =:= true end, InterestList),
+	lists:map(fun({{Identifier, _Status}, _PrevHash, Index}) -> addOutgoingTransaction(Identifier, Index, Tx, tx) end, FilteredInterestList),
+	lists:map(fun({{Identifier, _Status}, _Amount, Index}) -> updateTransactionBlock(Identifier, BlockNumber) end, FilteredInterestList).
+
 processIncoming(TxOutList, Tx, tx) ->
 	%Check to see which of the accounts in the lists we have interest in
 	InterestList = [{check_interest(Identifier), Amount, Index} || {Identifier, Amount, Index} <- TxOutList],
@@ -69,10 +84,20 @@ tx_callback(Tx) when is_record(Tx, tx) ->
 	processIncoming(TxOutList, Tx, tx),
 	processOutgoing(TxInList, Tx, tx).
 
+processBlockTransactions([], _TxCount, _BlockNumber) ->
+	ok;
+processBlockTransactions([Tx|MoreTransactions], TxCount, BlockNumber) ->
+	TxOutList = ebc_node:decodeTxOutAddr(Tx#tx.tx_out, 0),
+	TxInList = ebc_node:decodeTxInAddr(Tx#tx.tx_in, 0),
+	processIncoming(TxOutList, Tx, block, BlockNumber),
+	processOutgoing(TxInList, Tx, block, BlockNumber),
+	processBlockTransactions(MoreTransactions, TxCount-1, BlockNumber).
+
 block_callback({Hash, Number, Block}) when is_record(Block, block) ->
 	?DGB("Block Callback~n", []),
 	TxCount = Block#block.trans,
-	TxList = Block#block.transactions.
+	TxList = Block#block.transactions,
+	processBlockTransactions(TxList, TxCount, Number).
 	%Process Transaction List
 	
 
@@ -244,7 +269,6 @@ getWalletTransactions(Identifier) ->
 		_ -> {error, unknown_identifier}
 	end.
 
-
 checkInterest(Identifier) ->
 	F = fun() -> mnesia:read(wallet_identifier, Identifier) end,
 	Result = mnesia:transaction(F),
@@ -258,7 +282,27 @@ checkTransactionInterest(Identifier, Index) ->
 		undefined -> {Identifier, false};
 		_ -> {Identifier, true}
 	end.
-	
+
+%update the transaction block number for a passed transaction
+doUpdateTransactionBlockNumber([], _BlockNumber) -> ok;
+doUpdateTransactionBlockNumber([Transaction|MoreTransaction], BlockNumber) ->
+	addWalletTransactionToTable(Transaction#wallet_transaction{
+					block = BlockNumber
+				}),
+	doUpdateTransactionBlockNumber(MoreTransaction, BlockNumber).
+
+%identify the blocks in the wallet and update their block number with the passed block number
+updateTransactionBlock(Identifier, BlockNumber) ->
+	F = fun() ->
+		qlc:eval(qlc:q([X || X <- mnesia:table(wallet_transact), element(1, X#wallet_transaction.txid) =:= Identifier]))
+	end,
+
+	case mnesia:transaction(F) of
+		{atomic, Result} ->
+			doUpdateTransactionBlockNumber(Result, BlockNumber);
+		_ -> ok
+	end.
+
 %%handle an outbound transaction (something that came from a TxIn)
 addWalletTransaction(_Identifier, out, Index, #tx{} = Tx) ->
 	TxIn = lists:nth(Index+1, Tx#tx.tx_in),

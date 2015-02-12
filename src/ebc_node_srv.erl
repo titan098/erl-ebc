@@ -10,7 +10,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -export([start_link/0, stop/0, connectPeer/3]).
 -export([getAddr/0, sendPing/0, getBlocks/1, getBlock/1, getHeaders/1, getMaxBlocksSeen/0, updateLastBlockSeen/2]).
--export([processHeadersList/1, rebuildChain/1]).
+-export([processHeadersList/2, rebuildChain/1, rescanChain/1]).
 
 %% ====================================================================
 %% API functions
@@ -31,13 +31,19 @@ getAddr() ->
 sendPing() ->
 	gen_server:call(?MODULE, {sendPing}).
 
-getBlocks(StartHash) ->
+getBlocks(StartHash) when is_list(StartHash) ->
+	getBlocks(ebc_util:reverseBinary(ebc_util:hexToBinary(StartHash)));
+getBlocks(StartHash) when is_binary(StartHash)->
 	gen_server:call(?MODULE, {getBlocks, StartHash}).
 
 getBlock(BlockHash) when is_list(BlockHash) ->
 	getBlock(ebc_util:reverseBinary(ebc_util:hexToBinary(BlockHash)));
 getBlock(BlockHash) when is_binary(BlockHash) ->
 	gen_server:call(?MODULE, {getBlock, BlockHash}).
+
+fetchBlocks(HeaderList) ->
+	InvVect = [#inv_vect{type = ?INV_BLOCK, hash = ebc_util:reverseBinary(ebc_util:hexToBinary(BlockHash))} || {BlockHash, _BlockNumber} <- HeaderList],
+	gen_server:call(?MODULE, {fetchBlocks, InvVect}).
 
 getHeaders(StartHash) when is_list(StartHash) ->
 	getHeaders(ebc_util:reverseBinary(ebc_util:hexToBinary(StartHash)));
@@ -51,11 +57,19 @@ updateLastBlockSeen(BlockHash, BlockNumber) ->
 	gen_server:call(?MODULE, {updateLastBlockSeen, BlockHash, BlockNumber}).
 
 %%
-%% rebuild the hash chain
+%% rebuild the hash chain - don't download blocks
 %%
 rebuildChain(GenesisHash) ->
 	?DGB("Rebuilding the Hash Chain~n", []),
-	block_handler:addHeaderCallback(chain_rebuild, fun(X) -> ebc_node_srv:processHeadersList(X) end),
+	block_handler:addHeaderCallback(chain_rebuild, fun(X) -> ebc_node_srv:processHeadersList(X, false) end),
+	getHeaders(GenesisHash).
+
+%%
+%% rescan the hash chain - download the blocks
+%%
+rescanChain(GenesisHash) ->
+	?DGB("Rescanning the Hash Chain~n", []),
+	block_handler:addHeaderCallback(chain_rebuild, fun(X) -> ebc_node_srv:processHeadersList(X, true) end),
 	getHeaders(GenesisHash).
 
 %%% Callbacks
@@ -67,15 +81,23 @@ requestMoreHeaders(_LastSeenHash, _Start, _End) ->
 	block_handler:removeHeaderCallback(chain_rebuild),
 	ok.				%nothing more to get
 
-processHeadersList(HeadersList) ->
-	?DGB("Headers List Callback~n", []),
+%% Process the header list without downloading the blocks as we go
+processHeaders(HeadersList) ->
+ 	?DGB("Headers List Callback.~n", [HeadersList]),
 	MaxItem = getMaxBlocksSeen(), %get the max seen block from all of the peers
 	{LastSeenHash, LastHeight} = hd(lists:reverse(HeadersList)),  %the headers list will be a chain of items, get headers will return a list of items
 	?DGB(" Last Seen Hash {~p,~p}~n", [LastSeenHash, LastHeight]),
 	requestMoreHeaders(LastSeenHash, LastHeight, MaxItem),
 	ok.
 
-%% ====================================================================
+% Process the header list with the option of downloading the blocks as we go.
+processHeadersList(HeadersList, false) ->
+	processHeaders(HeadersList);
+
+processHeadersList(HeadersList, true) ->
+	processHeaders(HeadersList),
+	fetchBlocks(HeadersList).
+
 %% Behavioural functions 
 %% ====================================================================
 -record(state, {
@@ -139,6 +161,13 @@ handle_call({sendPing}, _From, #state{connectedPeers = Peers} = State) ->
 handle_call({getBlocks, StartHash}, _From, #state{connectedPeers = Peers} = State) ->
 	F = fun(#ebc_client_state{socket = Socket}) ->
 		ebc_node:sendCommand(Socket, getblocks, StartHash)
+	end,
+	lists:map(F, Peers),
+	{reply, ok, State};
+
+handle_call({fetchBlocks, InvVect}, _From, #state{connectedPeers = Peers} = State) ->
+	F = fun(#ebc_client_state{socket = Socket}) ->
+		block_handler:fetchBlocks(Socket, InvVect)		
 	end,
 	lists:map(F, Peers),
 	{reply, ok, State};

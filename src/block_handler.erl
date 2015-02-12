@@ -6,7 +6,7 @@
 -behaviour(gen_server).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([start_link/0, stop/0, processBlockHeaderCallbacks/1, addHeader/1, addBlock/1, checkBlock/1, getBlockHash/1, fetchBlock/3]).
+-export([start_link/0, stop/0, processBlockHeaderCallbacks/1, addHeader/1, addBlock/1, checkBlock/1, getBlockHash/1, fetchBlocks/2, fetchBlock/3]).
 -export([addHeaderCallback/2, getHeaderCallbacks/0, addBlockCallback/2, getBlockCallbacks/0]).
 
 -include_lib("stdlib/include/qlc.hrl").
@@ -47,7 +47,7 @@ processBlockCallbacks({Hash, Number, Block}) ->
 
 	F = fun({CallbackID, Callback}) ->
 		?DGB("Block Callback: ~p~n", [CallbackID]),
-		spawn(fun() -> Callback(Block) end),	%start it its own process so it doesn't break anything
+		spawn(fun() -> Callback({Hash, Number, Block}) end),	%start it its own process so it doesn't break anything
 		{ok, CallbackID}
 	end,
 
@@ -79,6 +79,10 @@ fetchBlock(Socket, Status, Hash) ->
 			ebc_node:sendCommand(Socket, getdata, [#inv_vect{type = ?INV_BLOCK, hash = Hash}]);
 		_ -> ok
 	end.
+
+fetchBlocks(Socket, InvVect) ->
+	io:format("Fetching a number of blocks.~n", []),
+	ebc_node:sendCommand(Socket, getdata, InvVect).
 
 addHeaderCallback(CallbackID, Callback) ->
 	gen_server:call(?MODULE, {addHeaderCallback, CallbackID, Callback}).
@@ -138,8 +142,8 @@ init([]) ->
 %% ====================================================================
 handle_call({addBlock, Block}, _From, State) ->
 	io:format("Adding Block: ~p~n", [ebc_util:binaryToHex(ebc_util:reverseBinary(Block#block.hash))]),
-	addBlockHeader(Block#block.header),
-	{reply, ok, State};
+	Reply = addBlockHeader(Block#block.header),
+	{reply, Reply, State};
 
 handle_call({addHeader, Header}, _From, State) ->
 	io:format("Adding Block Header: ~p~n", [ebc_util:binaryToHex(ebc_util:reverseBinary(Header#block_header.hash))]),
@@ -256,7 +260,6 @@ openMnesiaTable() ->
 	mnesia:create_table(block_header, [{ram_copies, [node()]},
 		{record_name, block_header},
 		{type, set},
-		{index, number},
 		{attributes, record_info(fields, block_header)}]).
 
 %addTxToTable(Tx) when is_record(Tx, tx) ->

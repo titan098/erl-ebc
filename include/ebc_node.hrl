@@ -48,7 +48,8 @@
 			tx_in = undefined,
 			tx_out_count = undefined,
 			tx_out = undefined,
-			lock_time = undefined
+			lock_time = undefined,
+			payload = <<>> % the binary form of the transaction - not generally included
 	   }).
 
 -record(version, {

@@ -16,7 +16,8 @@ addr(Addr) ->
 inv(#inv_vect{type = ?INV_BLOCK} = IV, Socket) ->
 	block_handler:fetchBlock(Socket, block_handler:checkBlock(IV#inv_vect.hash), IV#inv_vect.hash);	
 inv(#inv_vect{type = ?INV_TX} = IV, Socket) ->
-	tx_handler:fetchTx(Socket, tx_handler:checkTx(IV#inv_vect.hash), IV#inv_vect.hash);
+	tx_handler:checkFetchTx(Socket, IV#inv_vect.hash);
+	%tx_handler:fetchTx(Socket, tx_handler:checkTx(IV#inv_vect.hash), IV#inv_vect.hash);
 inv(#inv_vect{type = Type}, _Socket) ->
 	io:format("UNKNOWN TYPE: ~p~n", [Type]),
 	unknown.

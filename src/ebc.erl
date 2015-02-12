@@ -23,6 +23,7 @@ s() ->
  ebc_node_srv:start_link(),
  wallet_handler:start_link(),
  tx_handler:addTxCallback(wallet_processor, fun(X) -> wallet_handler:tx_callback(X) end),
+ %block_handler:addBlockCallback(block_test, fun(X) -> io:format("This is a test callback on Block~p~n", [X]) end),
  wallet_handler:add_wallet_identifier("muwPYaFuNysH5qZVdGZ9BZuboVFU5asw9C"),
  ebc_node_srv:connectPeer("192.168.2.3", 18333, ebc_callback_mgr),
 

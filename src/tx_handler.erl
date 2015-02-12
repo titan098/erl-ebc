@@ -41,9 +41,15 @@ getTxCallbacks() ->
 addTx(Tx) when is_record(Tx, tx) ->
 	gen_server:call(?MODULE, {addTx, Tx}).
 
+updateTransactions(TxList, BlockHash) ->
+	gen_server:call(?MODULE, {updateTx, TxList, BlockHash}).
+
 getTx(Tx) ->
 	%TODO: Make it execute a retrieval callback to the wallet
 	wallet_handler:get_wallet_transaction(Tx).
+
+checkFetchTx(Socket, Hash) ->
+	gen_server:call(?MODULE, {checkFetchTx, Socket, Hash}).
 
 checkTx(Tx) ->
 	gen_server:call(?MODULE, {checkTx, Tx}).
@@ -60,6 +66,14 @@ fetchTx(Socket, Status, Hash) ->
 %% ====================================================================
 -record(state, {
 	callbacks = []
+}).
+
+-record(tx_store, {
+	hash = undefined,
+	status = unconfirmed,
+	firstseen = undefined,
+	blocktime = undefined,
+	tx = <<>>
 }).
 
 %% init/1
@@ -104,13 +118,27 @@ handle_call({addCallback, CallbackID, Callback}, _From, State) ->
 	{reply, ok, State#state{callbacks = NewCallbackList}};
 
 handle_call({addTx, Tx}, _From, State) ->
-	io:format("Adding Tx: ~p~n", [ebc_util:binaryToHex(Tx#tx.hash)]),
+	?DGB("Adding Tx: ~p~n", [ebc_util:binaryToHex(Tx#tx.hash)]),
 	addTxToTable(Tx),
 	{reply, ok, State};
 
+handle_call({updateTx, TxList, BlockHash}, _From, State) ->
+	?DGB("Updating Transactions: ~n", []),
+	updateTxListStatus(TxList, BlockHash),
+	{reply, ok, State};
+
 handle_call({checkTx, Tx}, _From, State) ->
-	io:format("Checking Tx: ~p~n", [ebc_util:binaryToHex(Tx)]),
+	?DGB("Checking Tx: ~p~n", [ebc_util:binaryToHex(ebc_util:reverseBinary(Tx))]),
 	Reply = checkTxFromTable(Tx),
+	?DGB("Checking Tx: ~p ~p~n", [ebc_util:binaryToHex(ebc_util:reverseBinary(Tx)), Reply]),
+	{reply, Reply, State};
+
+handle_call({checkFetchTx, Socket, Hash}, _From, State) ->
+	?DGB("Checking Tx: ~p~n", [ebc_util:binaryToHex(ebc_util:reverseBinary(Hash))]),
+	Reply = checkTxFromTable(Hash),
+	?DGB("Checking Tx: ~p ~p~n", [ebc_util:binaryToHex(ebc_util:reverseBinary(Hash)), Reply]),
+	fetchTx(Socket, Reply, Hash),
+
 	{reply, Reply, State};
 
 handle_call(Request, From, State) ->
@@ -179,23 +207,72 @@ code_change(OldVsn, State, Extra) ->
 %% ====================================================================
 
 openMnesiaTable() ->
-	mnesia:create_table(tx, [{ram_copies, [node()]},
-		{record_name, tx},
+	mnesia:create_table(tx_store, [{ram_copies, [node()]},
+		{record_name, tx_store},
 		{type, set},
-		{attributes, record_info(fields, tx)}]).
+		{attributes, record_info(fields, tx_store)}]).
 
+%%
+%% Add/update a transaction from the database
+%%
 addTxToTable(Tx) when is_record(Tx, tx) ->
+	mnesia:transaction(
+		fun() -> mnesia:write(#tx_store{
+				hash = ebc_util:binaryToHex(Tx#tx.hash),
+				firstseen = ebc_util:epoch(),
+				tx = Tx#tx.payload
+			})
+		end);
+
+addTxToTable(Tx) when is_record(Tx, tx_store) ->
 	mnesia:transaction(fun() -> mnesia:write(Tx) end).
 
-checkTxFromTable(Tx) ->
+%%
+%% Get a TX from the table - the Transaction should be the hex-string in big-endian form
+%%
+getTxFromTable(TxHash) ->
+	{atomic, Result} = mnesia:transaction(fun() -> mnesia:read(tx_store, TxHash) end),
+	case Result of
+		[] -> unknown_tx;
+		[Tx] -> Tx
+	end.
+
+%%
+%% Update the status of a transaction in the table to reflect a transaction that is confirmed
+%%
+updateTxListStatus([], _BlockHash) ->
+	ok;
+updateTxListStatus([Tx|TxMore], BlockHash) ->
+	TxHash = ebc_util:binaryToHex(Tx#tx.hash),
+	?DGB("Updating Tx: ~p~n", [TxHash]),
+	updateTxStatus(TxHash, BlockHash),
+	updateTxListStatus(TxMore, BlockHash).
+	
+
+updateTxStatus(TxHash, BlockHash) ->
+	Transaction = getTxFromTable(TxHash),
+	case Transaction of
+		unknown_tx -> {error, unknown_transaction};
+		Result ->
+			addTxToTable(Result#tx_store{
+				status = BlockHash,
+				blocktime = ebc_util:epoch()
+			}),
+			{ok, updated}
+	end.
+
+%%
+%% Check to see if a transaction has been observed before - prevent requesting an already seen transaction
+%%
+checkTxFromTable(TxHash) ->
 %% the transaction in the inv packet is in little endian, and we want it in big endian
 %% so we need to reverse the binary.
-	{atomic, Result} = mnesia:transaction(fun() -> mnesia:read(tx, ebc_util:reverseBinary(Tx)) end),
+	?DGB("Checking: ~p~n", [ebc_util:binaryToHex(ebc_util:reverseBinary(TxHash))]),
+	{atomic, Result} = mnesia:transaction(fun() -> mnesia:read(tx_store, ebc_util:binaryToHex(ebc_util:reverseBinary(TxHash))) end),
 	case Result of
 		[] -> wanted_tx;
 		_ -> known_tx
 	end.
-
 
 
 printTxOutHash([]) -> ok;

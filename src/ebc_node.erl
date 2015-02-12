@@ -330,8 +330,29 @@ decodeTxOut(Count, Payload, Trans) ->
 
 decodeTransactions(_TransactionPayload, 0) -> [];
 decodeTransactions(TransactionPayload, TransCount) ->
-	{Tx, NewTransPayload} = decodePayload(<<"tx">>, TransactionPayload),
+	{Tx, NewTransPayload} = decodeTxPayload(<<"tx">>, TransactionPayload),
 	[Tx | decodeTransactions(NewTransPayload, TransCount-1)].
+
+decodeTxPayload(<<"tx">>, Payload) ->
+	<<Version:32/little, Payload1/binary>> = Payload,
+	{TxInCount, Payload2} = decodeVarInt(Payload1),
+	{ok, Payload3, TxIn} = decodeTxIn(TxInCount, Payload2, []),
+	{TxOutCount, Payload4} = decodeVarInt(Payload3),
+	{ok, Payload5, TxOut} = decodeTxOut(TxOutCount, Payload4, []),	
+	<<LockTime:32/little, Rest/binary>> = Payload5,
+	HeaderSize = size(Payload) - size(Rest),
+	<<HeaderPayload:HeaderSize/binary, _MorePayload/binary>> = Payload,
+
+	{#tx{
+		hash = ebc_util:reverseBinary(cryptopp:sha256(cryptopp:sha256(HeaderPayload))),
+		version = Version,
+		tx_in_count = TxInCount,
+		tx_in = TxIn,
+		tx_out_count = TxOutCount,
+		tx_out = TxOut,
+		lock_time = LockTime,
+		payload = <<>> %todo - include the raw payload here
+	}, Rest}.
 
 decodeHeaders(_HeadersPayload, 0) -> [];
 decodeHeaders(HeadersPayload, HeaderCount) ->
@@ -364,7 +385,7 @@ decodePayload(<<"block">>, Payload) ->
 			nonce = Nonce
 		},
 		trans = TransCount,
-		transactions = decodePayload(<<"tx">>, TransactionsPayload)
+		transactions = decodeTransactions(TransactionsPayload, TransCount)
 	};
 
 decodePayload(<<"ping">>, Payload) ->
@@ -378,7 +399,7 @@ decodePayload(<<"pong">>, Payload) ->
 decodePayload(<<"headers">>, Payload) ->
 	{Count, Payload2} = decodeVarInt(Payload),
 	decodeHeaders(Payload2, Count);
-	
+
 decodePayload(<<"tx">>, Payload) ->
 	<<Version:32/little, Payload1/binary>> = Payload,
 	{TxInCount, Payload2} = decodeVarInt(Payload1),
@@ -396,7 +417,8 @@ decodePayload(<<"tx">>, Payload) ->
 		tx_in = TxIn,
 		tx_out_count = TxOutCount,
 		tx_out = TxOut,
-		lock_time = LockTime
+		lock_time = LockTime,
+		payload = Payload
 	};
 
 decodePayload(<<"inv">>, Payload) ->
@@ -592,7 +614,7 @@ encodePayloadArray([Payload | MorePayload]) when is_tuple(Payload) ->
 %************* Sending Commands ****************%
 sendCommand(Socket, getaddr, []) ->
 	gen_tcp:send(Socket, constuctAddrMessage());
-sendCommand(Socket, getdata, [Inventory]) ->
+sendCommand(Socket, getdata, Inventory) when is_list(Inventory) ->
 	gen_tcp:send(Socket, constructGetDataMessage(Inventory));
 sendCommand(Socket, pong, Nonce) ->
 	gen_tcp:send(Socket, constructPingMessage("pong", Nonce));
