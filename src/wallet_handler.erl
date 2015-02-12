@@ -1,6 +1,23 @@
-%% @author david
-%% @doc @todo Add description to peer_handler.
-
+%% @author David Ellefsen <davidellefsen@gmail.com> 
+%%
+%% @doc wallet_handler is a handler for wallets on the bitcoin network
+%% currently only this will support watching transactions on the network.
+%% wallets will register their interest to receive transaction information
+%% from the network.
+%%
+%% Copyright 2015 David Ellefsen
+%%
+%% Licensed under the Apache License, Version 2.0 (the "License");
+%% you may not use this file except in compliance with the License.
+%% You may obtain a copy of the License at
+%% 
+%%    http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing, software
+%% distributed under the License is distributed on an "AS IS" BASIS,
+%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%% See the License for the specific language governing permissions and
+%% limitations under the License.
 
 -module(wallet_handler).
 -behaviour(gen_server).

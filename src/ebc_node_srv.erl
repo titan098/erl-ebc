@@ -1,6 +1,22 @@
-%% @author david
-%% @doc @todo Add description to ebc_node_srv.
-
+%% @author David Ellefsen <davidellefsen@gmail.com> 
+%%
+%% @doc ebc_node_srv is the module that handles the management of connect nodes
+%% in the bitcoin P2P network. Functions such as rebuilding the block chain or
+%% transaction history are provided in this module
+%%
+%% Copyright 2015 David Ellefsen
+%%
+%% Licensed under the Apache License, Version 2.0 (the "License");
+%% you may not use this file except in compliance with the License.
+%% You may obtain a copy of the License at
+%% 
+%%    http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing, software
+%% distributed under the License is distributed on an "AS IS" BASIS,
+%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%% See the License for the specific language governing permissions and
+%% limitations under the License.
 
 -module(ebc_node_srv).
 -behaviour(gen_server).
